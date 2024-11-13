@@ -1,21 +1,21 @@
-#!/usr/bin/env /usr/bin/python3
+#!/usr/bin/env python3 
+#use the pthon3 in $PATH
+
+#================== This script need to run inside the folder of log_*
 
 import sys, os
 import pandas
 
-
-#inFile_base = sys.argv[1]
-
-
 all_files = [f for f in os.listdir(".") if os.path.isfile(os.path.join(".", f))]
-fileList = [f for f in all_files if 'log' in f]
-fileList = [item for item in fileList if "summary" not in item]
-fileList = [item for item in fileList if ".py" not in item]
+fileList = [f for f in all_files if 'log' in f] # pick any file has 'log'
+fileList = [item for item in fileList if "summary" not in item] # pick any file does not have 'summary'
+fileList = [item for item in fileList if ".py" not in item] # pick any file does not have '.py'
 
 tempData = []
 
 header = ['BE', 'J', 'pi', 'T']
 isHeaderDone = False
+tempData = []
 data = []
 BigExList = [] # that contain many nuclei
 IsoList = []
@@ -46,6 +46,7 @@ for fileIndex, f in enumerate(fileList):
           if len(columns) >= 7 and columns[0] == 'orbit':
             orbtial = columns[6] + "-" + columns[7]
           if len(columns) == 8 and columns[0][1] == '(':
+            tempData = []
             tempData.append(orbtial)
             tempData.append(float(columns[2]))
             tempData.append(float(columns[5]))
@@ -63,7 +64,6 @@ for fileIndex, f in enumerate(fileList):
         
         IsoList.append( f.split('_')[1])
 
-        tempData = []
         for line in file:
           columns = line.strip().split()
 
@@ -72,11 +72,13 @@ for fileIndex, f in enumerate(fileList):
             if len(columns) >=3 and columns[0] == 'p' and columns[1] == 'orbit':
               for index, a in enumerate(columns):
                 if index > 1 : header.append('p-'+a)
+              continue
             if len(columns) >=3 and columns[0] == 'n' and columns[1] == 'orbit':
               for index, a in enumerate(columns):
                 if index > 1 : header.append('n-'+a)
               isHeaderDone = True
               nOrbital = (len(header)-4)/2
+              continue
               
           if isHeaderDone :
             #==== get the energy and orbtial occupancy
@@ -84,21 +86,28 @@ for fileIndex, f in enumerate(fileList):
               tempData.append(float(columns[2]))
               tempData.append(columns[6])
               tempData.append(columns[8])
+              continue
             if len(columns) == 6 and columns[0] == '<Hcm>:' :
               tempData.append(columns[5])
+              continue
             if len(columns) == 4 and columns[0] == '<TT>:' :
               tempData.append(columns[3])
+              continue
             if len(columns) >= nOrbital and columns[0] == '<p' and columns[1] == 'Nj>' :
               for index, a in enumerate(columns): 
                 if index > 1 :  tempData.append(float(a))
+              continue
             if len(columns) >= nOrbital and columns[0] == '<n' and columns[1] == 'Nj>' :
               for index, a in enumerate(columns): 
                 if index > 1 :  tempData.append(float(a))
-            if len(columns) >=1 and columns[0] == '<Lp>':
+              continue
+            if len(tempData) > 0 and   ('------' in line):
               data.append(tempData) 
               tempData = []
+              continue
 
         BigExList.append(data)
+        # print(BigExList)
 
   except FileNotFoundError:
     print(f"File not found: {f}")
@@ -113,7 +122,6 @@ pandas.set_option('display.width', None)
 print("================================")
 
 SFData = sorted(SFData, key=lambda x: (x[1], x[2]))
-
 dfSF = pandas.DataFrame(SFData, columns=['orb', 'E1', 'E2', 'SF', 'Nu1', 'Nu2'])
 
 # for row in SFData: print(row)
@@ -128,7 +136,7 @@ dfSF = pandas.DataFrame(SFData, columns=['orb', 'E1', 'E2', 'SF', 'Nu1', 'Nu2'])
 print("================================ no. orbital : %d" % nOrbital)
 
 CondensedIso = list(set(IsoList))
-print(CondensedIso)
+# print(CondensedIso)
 #=== sort CondensedIso by the number part
 import re
 def custom_sort_key(s):
@@ -137,8 +145,6 @@ def custom_sort_key(s):
 
 CondensedIso.sort(key = custom_sort_key)
 
-print(CondensedIso)
-
 #create an empty list of list
 CondensedData = [ [] for _ in range(len(CondensedIso))]
 
@@ -146,14 +152,11 @@ for k, iso in enumerate(CondensedIso):
   for index, iso2 in enumerate(IsoList):
     if iso == iso2 :
       CondensedData[k] += BigExList[index]
-  
-# for k, haha in enumerate(CondensedData):
-#   print("=========" + CondensedIso[k])
-#   for row in haha: print(row)
 
 DF = pandas.DataFrame()
 
 for k, haha in enumerate(CondensedData):
+
   data = sorted(haha, key=lambda x: x[0])
 
   # print(header)
@@ -161,15 +164,12 @@ for k, haha in enumerate(CondensedData):
   df =  pandas.DataFrame(data, columns=header)
 
   #===== calculate excitation energy
-  ex = [0]
+  ex = []
   isoName = []
 
-  if k == 0 : isoName.append(CondensedIso[k])
-
   for index, row in enumerate(data):
-    if index > 0 :
-      isoName.append(CondensedIso[k])
-      ex.append(row[0] - data[0][0])
+    isoName.append(CondensedIso[k])
+    ex.append(row[0] - data[0][0])
 
   df.insert(1, 'Ex', ex)
   df.insert(0, 'Iso', isoName)
@@ -185,9 +185,9 @@ for iso in CondensedIso:
 
 #Fine out which iso is the middle, assume only 3 iso
 
-if len(CondensedIso) != 3 : exit()
+# if len(CondensedIso) != 3 : exit()
 
-
+#============== Removal Reaction
 orbtialList = header[4:]
 # print(orbtialList)
 
@@ -221,16 +221,16 @@ removeDF = pandas.DataFrame(removeSF, columns= ['BE', 'Ex', 'J', 'pi', 'T'] + or
 
 print(removeDF)
 
-if len(CondensedIso) < 3 : exit()
-#===== adding reaction
+# if len(CondensedIso) < 3 : exit()
+#===================== adding reaction
 
-df = DF[DF['Iso'] == CondensedIso[1]].sort_values(by=['BE'])
-dft = DF[DF['Iso'] == CondensedIso[2]].sort_values(by=['BE'])
+df = DF[DF['Iso'] == CondensedIso[0]].sort_values(by=['BE'])
+dft = DF[DF['Iso'] == CondensedIso[1]].sort_values(by=['BE'])
 
 
 adding = dfSF[dfSF['E2'] == round(df['BE'].iloc[0],3)]
 # print(adding)
-print("================================ %s adding to %s" % (CondensedIso[1], CondensedIso[2]))
+print("================================ %s adding to %s" % (CondensedIso[0], CondensedIso[1]))
 
 addingSF = []
 tempData = []
