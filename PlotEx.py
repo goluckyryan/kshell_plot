@@ -1,6 +1,6 @@
 #!/usr/bin/env /usr/bin/python3
 
-import sys, os
+import argparse, sys, os
 import pandas as pd
 
 # the API webpage
@@ -16,7 +16,12 @@ def lc_read_csv(url):
   req.add_header('User-Agent', 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:77.0) Gecko/20100101 Firefox/77.0')
   return pd.read_csv(urllib.request.urlopen(req))
 
-haha = lc_read_csv(livechart + 'fields=ground_states&nuclides=all')
+haha = None
+def Nuclides():
+  global haha
+  if haha is None:
+    haha = lc_read_csv(livechart + 'fields=ground_states&nuclides=all')
+  return haha
 
 mp = 938.27208816; #MeV/c^2
 mn = 939.56542052;
@@ -30,11 +35,13 @@ def FindZ(AZ):
     return 'na'
 def FindSym(Z):
   try:
+    haha = Nuclides()
     return (haha['symbol'][haha['z']==Z]).iloc[0]
   except:
     return 'na'
 def Mass(A, Z):
   try :
+    haha = Nuclides()
     BEA = float(haha['binding'][haha['z']==Z][haha['n']==(A-Z)].iloc[0])/1000
     return (A-Z)*mn + Z*mp - A * BEA
   except :
@@ -96,14 +103,12 @@ def Info(AZ):
   print("====================================================")
 
 
-import plotly.express as px
-import plotly.graph_objects as go
-
 fontSize = 20
 plotHeight = 500
 plotWidth = 400
 yMin = -1
 def DrawLevelsFromData(data, name, maxEx, xShift):
+  import plotly.graph_objects as go
   ex=data['energy']
   jp=data['jp']
   fig = go.Figure()
@@ -158,6 +163,7 @@ def DrawLevelsFromData(data, name, maxEx, xShift):
   return fig
 
 def DrawLevels(AZ, maxEx, xShift):
+  import plotly.graph_objects as go
   query = livechart + "fields=ground_states&nuclides=" + AZ
   temp = lc_read_csv(query)
   Z = temp['z'][0]
@@ -171,7 +177,7 @@ def DrawLevels(AZ, maxEx, xShift):
   jaja['energy'] = jaja['energy']/1000
   fig = DrawLevelsFromData(jaja, "Exp", maxEx, xShift)
 
-  fig.add_annotation(x=0.5 + xShift, y=maxEx+1, text=("<sup>%s</sup>%s" % (A, Sym)), font=dict(size=1.5*fontSize), showarrow=False)
+  fig.add_annotation(x=0.5 + xShift, y=maxEx+1, text=("<sup>%s</sup>%s" % (A, Sym)), font=dict(size=1.5*fontSize, family="Times New Roman"), showarrow=False)
 
   if( sn < maxEx ):
     fig.add_trace(go.Scatter(x=[-0.6 + xShift,-0.1 + xShift], y=[sn,sn],mode='lines',line=dict(color='red', width=1)))
@@ -185,28 +191,106 @@ def DrawLevels(AZ, maxEx, xShift):
 
 #=====================================================
 #=====================================================
-import plotly.offline as pyo
+# Shell-model levels, read from a kshell summary_*.txt "Energy levels" table:
+#   N    J prty N_Jp    T     E(MeV)  Ex(MeV)  log-file
+def LabelFromFileName(fileName):
+  import re
+  base = os.path.splitext(os.path.basename(fileName))[0]
+  m = re.search(r'([A-Za-z]+\d+|\d+[A-Za-z]+)', base)
+  if m:
+    return m.group(1)
+  return base
 
-fig = DrawLevels("11C", 7, 0)
+def ReadShellLevels(fileName):
+  rows = []
+  with open(fileName) as f:
+    for line in f:
+      cols = line.split()
+      if len(cols) != 8:
+        continue
+      try:
+        N = int(cols[0])
+      except ValueError:
+        continue
+      rows.append({'energy': float(cols[6]), 'jp': cols[1] + cols[2]})
+  if len(rows) == 0:
+    print("Error: no energy levels found in %s" % fileName)
+    sys.exit(1)
+  df = pd.DataFrame(rows)
+  df = df.sort_values(by='energy').reset_index(drop=True)
+  return df
 
-fig2 = DrawLevels("12C", 7, 3)
-for trace in fig2.data:
-    fig.add_trace(trace)
-for annotation in fig2.layout.annotations:
-    fig.add_annotation(annotation)
+def DrawShell(fileName, label, maxEx, xShift):
+  df = ReadShellLevels(fileName)
+  df = df[df['energy'] <= maxEx].reset_index(drop=True)
+  fig = DrawLevelsFromData(df, "SM", maxEx, xShift)
+  fig.add_annotation(x=0.5 + xShift, y=maxEx+1, text=label, font=dict(size=1.5*fontSize, family="Times New Roman"), showarrow=False)
+  return fig
 
-fig3 = DrawLevels("13C", 7, 6)
-for trace in fig3.data:
-    fig.add_trace(trace)
-for annotation in fig3.layout.annotations:
-    fig.add_annotation(annotation)
+def BuildPanels(nuclides, shellFiles):
+  if nuclides and shellFiles and len(nuclides) != len(shellFiles):
+    print("Error: number of --shell files (%d) must match number of nuclides (%d)." % (len(shellFiles), len(nuclides)))
+    sys.exit(1)
+  panels = []
+  n = max(len(nuclides), len(shellFiles))
+  for i in range(n):
+    if i < len(nuclides):
+      panels.append(('exp', nuclides[i], nuclides[i]))
+    if i < len(shellFiles):
+      label = nuclides[i] if i < len(nuclides) else LabelFromFileName(shellFiles[i])
+      panels.append(('shell', shellFiles[i], label))
+  return panels
 
+def PlotLevels(nuclides, shellFiles, maxEx, outName):
+  import plotly.offline as pyo
+  panels = BuildPanels(nuclides, shellFiles)
+  fig = None
 
-fig.update_xaxes(showline=False,  visible= False, range=[-1, 12])
-fig.update_layout(width=plotWidth*3)
+  for i, (kind, key, label) in enumerate(panels):
+    if kind == 'exp':
+      f2 = DrawLevels(key, maxEx, 3*i)
+    else:
+      f2 = DrawShell(key, label, maxEx, 3*i)
+    if fig is None:
+      fig = f2
+    else:
+      for trace in f2.data:
+        fig.add_trace(trace)
+      for annotation in f2.layout.annotations:
+        fig.add_annotation(annotation)
 
-#fig.show() # assigne random port
+  fig.update_xaxes(showline=False,  visible= False, range=[-1, 3*len(panels)])
+  fig.update_layout(width=plotWidth*len(panels))
 
-pyo.plot(fig, filename="temp.html", auto_open=True)
+  #fig.show() # assigne random port
+
+  pyo.plot(fig, filename=outName, auto_open=True)
+
+def build_parser():
+  parser = argparse.ArgumentParser(
+    description="Plot experimental level schemes (IAEA LiveChart) and/or shell model levels (kshell summary files).",
+    epilog="Examples:\n"
+           "  PlotEx.py 11C 12C 13C --max 7 --out temp.html\n"
+           "  PlotEx.py 11C 12C 13C --shell summary_C11_ysox.txt summary_C12_ysox.txt summary_C13_ysox.txt\n"
+           "  PlotEx.py --shell summary_C11_ysox.txt",
+    formatter_class=argparse.RawDescriptionHelpFormatter)
+  parser.add_argument("nuclides", nargs="*", metavar="AZ",
+    help="experimental nuclide(s) to plot, e.g. 11C 12C 13C")
+  parser.add_argument("--shell", dest="shellFiles", nargs="+", metavar="FILE",
+    help="shell model summary file(s) with the 'Energy levels' table; plotted as SM panel(s), in the same order as the nuclides")
+  parser.add_argument("--max", dest="maxEx", type=float, default=7,
+    help="max excitation energy in MeV (default: 7)")
+  parser.add_argument("--out", dest="outName", default="temp.html",
+    help="output html file (default: temp.html)")
+  return parser
+
+if __name__ == "__main__":
+  parser = build_parser()
+  args = parser.parse_args()
+  shellFiles = args.shellFiles if args.shellFiles else []
+  if len(args.nuclides) == 0 and len(shellFiles) == 0:
+    parser.print_help()
+    sys.exit(0)
+  PlotLevels(args.nuclides, shellFiles, args.maxEx, args.outName)
 
 
